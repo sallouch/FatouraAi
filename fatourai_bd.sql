@@ -1,477 +1,382 @@
+-- ============================================================
+--  FatouraAI — Base de Données PostgreSQL
+--  ISIMM · Projet de Fin d'Année 2025-2026
+--  Encadrant : M. Nafaa Hafar
+--  Équipe : Islem Trojet, Houda Essalmi, Fatma Boujdaria,
+--           Youssef Nouira, Idris Jlidi
+-- ============================================================
+ 
+-- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+ 
+CREATE TYPE role_utilisateur  AS ENUM ('admin', 'commercant', 'comptable');
+CREATE TYPE statut_facture     AS ENUM ('brouillon', 'confirmee', 'signee', 'envoyee_ttn', 'acceptee', 'refusee', 'annulee');
+CREATE TYPE type_facture       AS ENUM ('facture', 'avoir');
+CREATE TYPE taux_tva           AS ENUM ('0', '7', '13', '19');
+CREATE TYPE statut_ttn         AS ENUM ('envoye', 'accepte', 'refuse', 'erreur');
+CREATE TYPE statut_reclamation AS ENUM ('ouverte', 'en_cours', 'resolue', 'fermee');
+CREATE TYPE type_client        AS ENUM ('particulier', 'entreprise');
+CREATE TYPE statut_avoir       AS ENUM ('brouillon', 'confirme', 'annule');
+CREATE TYPE role_ia            AS ENUM ('user', 'assistant');
 
-CREATE TYPE user_role       AS ENUM ('owner', 'admin', 'member');
-CREATE TYPE user_status     AS ENUM ('active', 'inactive', 'suspended');
-CREATE TYPE tenant_status   AS ENUM ('active', 'suspended', 'cancelled');
-CREATE TYPE plan_interval   AS ENUM ('month', 'year');
-CREATE TYPE sub_status      AS ENUM ('trialing', 'active', 'past_due', 'cancelled');
-
-CREATE TYPE invoice_status  AS ENUM (
-  'draft', 'confirmed', 'signed', 'sent_to_ttn',
-  'accepted', 'rejected', 'cancelled'
+CREATE TABLE Utilisateur (
+    id_utilisateur  UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nom             VARCHAR(100) NOT NULL,
+    prenom          VARCHAR(100) NOT NULL,
+    email           VARCHAR(255) NOT NULL UNIQUE,
+    mot_de_passe    VARCHAR(255) NOT NULL,
+    telephone       VARCHAR(20),
+    role            role_utilisateur NOT NULL DEFAULT 'commercant',
+    date_inscription TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    est_actif       BOOLEAN      NOT NULL DEFAULT TRUE
 );
-CREATE TYPE invoice_type    AS ENUM ('invoice', 'credit_note');
-CREATE TYPE tva_rate        AS ENUM ('0', '7', '13', '19');
+ 
+CREATE INDEX idx_utilisateur_email ON Utilisateur(email);
 
-CREATE TYPE ttn_event_type  AS ENUM ('sent', 'accepted', 'rejected', 'error');
-CREATE TYPE claim_status    AS ENUM ('open', 'in_progress', 'resolved', 'closed');
-CREATE TYPE notif_type      AS ENUM (
-  'invoice_accepted', 'invoice_rejected', 'invoice_sent',
-  'claim_received', 'claim_resolved', 'system'
+CREATE TABLE Entreprise (
+    id_entreprise   UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_utilisateur  UUID         NOT NULL REFERENCES Utilisateur(id_utilisateur) ON DELETE CASCADE,
+    raison_sociale  VARCHAR(255) NOT NULL,
+    matricule_fiscal VARCHAR(50),
+    adresse         TEXT,
+    code_postal     VARCHAR(10),
+    ville           VARCHAR(100),
+    pays            VARCHAR(100) NOT NULL DEFAULT 'Tunisie',
+    telephone       VARCHAR(20),
+    logo_url        VARCHAR(500)
 );
-CREATE TYPE ai_role         AS ENUM ('user', 'assistant');
+ 
+CREATE INDEX idx_entreprise_utilisateur ON Entreprise(id_utilisateur);
 
-CREATE TABLE tenants (
-  id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name            TEXT        NOT NULL,
-  slug            TEXT        NOT NULL UNIQUE,
-  tax_id          TEXT,                        -- Matricule fiscal
-  address         TEXT,
-  phone           TEXT,
-  email           TEXT,
-  logo_url        TEXT,
-  status          tenant_status NOT NULL DEFAULT 'active',
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE Client (
+    id_client       UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_entreprise   UUID         NOT NULL REFERENCES Entreprise(id_entreprise) ON DELETE CASCADE,
+    nom             VARCHAR(255) NOT NULL,
+    matricule_fiscal VARCHAR(100),
+    email           VARCHAR(255),
+    telephone       VARCHAR(20),
+    adresse         TEXT,
+    type_client     type_client  NOT NULL DEFAULT 'entreprise',
+    est_actif       BOOLEAN      NOT NULL DEFAULT TRUE
 );
+ 
+CREATE INDEX idx_client_entreprise ON Client(id_entreprise);
 
-CREATE TABLE plans (
-  id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name            TEXT        NOT NULL,
-  price_cents     INT         NOT NULL DEFAULT 0,
-  interval        plan_interval NOT NULL DEFAULT 'month',
-  max_invoices    INT,                         -- NULL = illimité
-  features        JSONB       NOT NULL DEFAULT '{}',
-  is_active       BOOLEAN     NOT NULL DEFAULT TRUE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE Produit (
+    id_produit      UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_entreprise   UUID           NOT NULL REFERENCES Entreprise(id_entreprise) ON DELETE CASCADE,
+    reference       VARCHAR(100),
+    designation     TEXT           NOT NULL,
+    unite           VARCHAR(50)    NOT NULL DEFAULT 'unité',
+    prix_unitaire_ht DECIMAL(12,3) NOT NULL DEFAULT 0,
+    taux_tva        taux_tva       NOT NULL DEFAULT '19',
+    est_actif       BOOLEAN        NOT NULL DEFAULT TRUE
 );
+ 
+CREATE INDEX idx_produit_entreprise ON Produit(id_entreprise);
 
-CREATE TABLE subscriptions (
-  id                  UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id           UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  plan_id             UUID        NOT NULL REFERENCES plans(id),
-  status              sub_status  NOT NULL DEFAULT 'trialing',
-  current_period_start TIMESTAMPTZ,
-  current_period_end  TIMESTAMPTZ,
-  stripe_sub_id       TEXT        UNIQUE,
-  stripe_customer_id  TEXT,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE Facture (
+    id_facture      UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    numero_facture  VARCHAR(50)    NOT NULL,
+    id_entreprise   UUID           NOT NULL REFERENCES Entreprise(id_entreprise) ON DELETE CASCADE,
+    id_client       UUID           NOT NULL REFERENCES Client(id_client),
+    date_emission   DATE           NOT NULL DEFAULT CURRENT_DATE,
+    date_echeance   DATE,
+    montant_ht      DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    montant_tva     DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    montant_ttc     DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    statut          statut_facture NOT NULL DEFAULT 'brouillon',
+    signature_elec  TEXT,
+    url_pdf         VARCHAR(500),
+    url_xml         VARCHAR(500),
+    date_creation   TIMESTAMPTZ       NOT NULL DEFAULT NOW(),
+ 
+    UNIQUE (id_entreprise, numero_facture)
 );
+ 
+CREATE INDEX idx_facture_entreprise ON Facture(id_entreprise);
+CREATE INDEX idx_facture_client     ON Facture(id_client);
+CREATE INDEX idx_facture_statut     ON Facture(statut);
 
-CREATE INDEX idx_sub_tenant ON subscriptions(tenant_id);
-
-CREATE TABLE users (
-  id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id       UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  email           TEXT        NOT NULL UNIQUE,
-  password_hash   TEXT        NOT NULL,
-  full_name       TEXT        NOT NULL,
-  role            user_role   NOT NULL DEFAULT 'member',
-  status          user_status NOT NULL DEFAULT 'active',
-  avatar_url      TEXT,
-  last_login_at   TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE LigneFacture (
+    id_ligne        UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_facture      UUID           NOT NULL REFERENCES Facture(id_facture) ON DELETE CASCADE,
+    id_produit      UUID           REFERENCES Produit(id_produit) ON DELETE SET NULL,
+    designation     TEXT           NOT NULL,
+    quantite        DECIMAL(10,3)  NOT NULL DEFAULT 1,
+    prix_unitaire_ht DECIMAL(12,3) NOT NULL DEFAULT 0,
+    taux_tva        taux_tva       NOT NULL DEFAULT '19',
+    montant_ht      DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    montant_tva     DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    montant_ttc     DECIMAL(14,3)  NOT NULL DEFAULT 0
 );
+ 
+CREATE INDEX idx_ligne_facture ON LigneFacture(id_facture);
 
-CREATE INDEX idx_users_tenant   ON users(tenant_id);
-CREATE INDEX idx_users_email    ON users(email);
-
-CREATE TABLE sessions (
-  id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id         UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  refresh_token   TEXT        NOT NULL UNIQUE,
-  expires_at      TIMESTAMPTZ NOT NULL,
-  ip_address      INET,
-  user_agent      TEXT,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE Avoir (
+    id_avoir        UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_facture_orig UUID           NOT NULL REFERENCES Facture(id_facture),
+    numero_avoir    VARCHAR(50)    NOT NULL,
+    date_emission   DATE           NOT NULL DEFAULT CURRENT_DATE,
+    motif           TEXT,
+    montant_ht      DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    montant_tva     DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    montant_ttc     DECIMAL(14,3)  NOT NULL DEFAULT 0,
+    statut          statut_avoir   NOT NULL DEFAULT 'brouillon',
+    date_creation   TIMESTAMPTZ       NOT NULL DEFAULT NOW()
 );
-
-CREATE INDEX idx_sessions_user ON sessions(user_id);
-
-
-CREATE TABLE clients (
-  id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id       UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  name            TEXT        NOT NULL,
-  tax_id          TEXT,                        
-  email           TEXT,
-  phone           TEXT,
-  address         TEXT,
-  city            TEXT,
-  country         TEXT        NOT NULL DEFAULT 'TN',
-  notes           TEXT,
-  is_active       BOOLEAN     NOT NULL DEFAULT TRUE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+ 
+CREATE INDEX idx_avoir_facture ON Avoir(id_facture_orig);
+ 
+CREATE TABLE SoumissionTTN (
+    id_soumission   UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_facture      UUID           NOT NULL REFERENCES Facture(id_facture) ON DELETE CASCADE,
+    date_soumission TIMESTAMPTZ       NOT NULL DEFAULT NOW(),
+    statut_ttn      statut_ttn     NOT NULL DEFAULT 'envoye',
+    reference_ttn   VARCHAR(100),
+    reponse_ttn     TEXT,
+    nb_tentatives   INT            NOT NULL DEFAULT 1,
+    date_reponse    TIMESTAMPTZ
 );
-
-CREATE INDEX idx_clients_tenant ON clients(tenant_id);
-
-CREATE TABLE products (
-  id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id       UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  code            TEXT,
-  name            TEXT        NOT NULL,
-  description     TEXT,
-  unit_price      NUMERIC(12,3) NOT NULL DEFAULT 0,
-  tva_rate        tva_rate    NOT NULL DEFAULT '19',
-  unit            TEXT        NOT NULL DEFAULT 'unité',
-  is_service      BOOLEAN     NOT NULL DEFAULT FALSE,
-  is_active       BOOLEAN     NOT NULL DEFAULT TRUE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+ 
+CREATE INDEX idx_soumission_facture ON SoumissionTTN(id_facture);
+ 
+CREATE TABLE HistoriqueStatut (
+    id_historique   UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_facture      UUID           NOT NULL REFERENCES Facture(id_facture) ON DELETE CASCADE,
+    ancien_statut   statut_facture,
+    nouveau_statut  statut_facture NOT NULL,
+    date_changement TIMESTAMPTZ       NOT NULL DEFAULT NOW(),
+    id_utilisateur  UUID           REFERENCES Utilisateur(id_utilisateur),
+    commentaire     TEXT
 );
+ 
+CREATE INDEX idx_historique_facture ON HistoriqueStatut(id_facture);
 
-CREATE INDEX idx_products_tenant ON products(tenant_id);
-
-CREATE TABLE invoices (
-  id                UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id         UUID          NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  created_by        UUID          NOT NULL REFERENCES users(id),
-  client_id         UUID          NOT NULL REFERENCES clients(id),
-
-  invoice_number    TEXT          NOT NULL,
-  invoice_type      invoice_type  NOT NULL DEFAULT 'invoice',
-  credit_note_for   UUID          REFERENCES invoices(id),
-
-  issue_date        DATE          NOT NULL DEFAULT CURRENT_DATE,
-  due_date          DATE,
-  status            invoice_status NOT NULL DEFAULT 'draft',
-  total_ht          NUMERIC(14,3) NOT NULL DEFAULT 0,
-  total_tva         NUMERIC(14,3) NOT NULL DEFAULT 0,
-  total_ttc         NUMERIC(14,3) NOT NULL DEFAULT 0,
-  client_snapshot   JSONB         NOT NULL DEFAULT '{}',
-  issuer_snapshot   JSONB         NOT NULL DEFAULT '{}',
-
-  ttn_reference     TEXT,
-  ttn_status        TEXT,
-  ttn_submitted_at  TIMESTAMPTZ,
-  ttn_response_at   TIMESTAMPTZ,
-  ttn_raw_response  JSONB,
-
-  pdf_url           TEXT,
-  xml_url           TEXT,
-
-  signed_at         TIMESTAMPTZ,
-  signed_by         UUID          REFERENCES users(id),
-  signature_hash    TEXT,
-
-  notes             TEXT,
-  created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  updated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-
-  UNIQUE (tenant_id, invoice_number)
+CREATE TABLE Reclamation (
+    id_reclamation  UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_facture      UUID           NOT NULL REFERENCES Facture(id_facture),
+    id_utilisateur  UUID           NOT NULL REFERENCES Utilisateur(id_utilisateur),
+    description     TEXT           NOT NULL,
+    statut          statut_reclamation NOT NULL DEFAULT 'ouverte',
+    date_soumission TIMESTAMPTZ       NOT NULL DEFAULT NOW(),
+    date_resolution TIMESTAMPTZ
 );
+ 
+CREATE INDEX idx_reclamation_facture ON Reclamation(id_facture);
+CREATE INDEX idx_reclamation_user    ON Reclamation(id_utilisateur);
 
-CREATE INDEX idx_invoices_tenant    ON invoices(tenant_id);
-CREATE INDEX idx_invoices_client    ON invoices(client_id);
-CREATE INDEX idx_invoices_status    ON invoices(status);
-CREATE INDEX idx_invoices_created   ON invoices(tenant_id, created_at DESC);
-CREATE TABLE invoice_lines (
-  id              UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
-  invoice_id      UUID          NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
-  product_id      UUID          REFERENCES products(id) ON DELETE SET NULL,
-  line_order      INT           NOT NULL DEFAULT 0,
-
-  description     TEXT          NOT NULL,
-  quantity        NUMERIC(10,3) NOT NULL DEFAULT 1,
-  unit_price      NUMERIC(12,3) NOT NULL DEFAULT 0,
-  tva_rate        tva_rate      NOT NULL DEFAULT '19',
-
-  total_ht        NUMERIC(14,3) NOT NULL DEFAULT 0,
-  total_tva       NUMERIC(14,3) NOT NULL DEFAULT 0,
-  total_ttc       NUMERIC(14,3) NOT NULL DEFAULT 0
+CREATE TABLE Notification (
+    id_notification UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_utilisateur  UUID           NOT NULL REFERENCES Utilisateur(id_utilisateur) ON DELETE CASCADE,
+    id_facture      UUID           REFERENCES Facture(id_facture) ON DELETE CASCADE,
+    type_notif      VARCHAR(50)    NOT NULL,
+    message         TEXT           NOT NULL,
+    est_lue         BOOLEAN        NOT NULL DEFAULT FALSE,
+    date_envoi      TIMESTAMPTZ       NOT NULL DEFAULT NOW()
 );
-
-CREATE INDEX idx_invoice_lines_invoice ON invoice_lines(invoice_id);
-CREATE TABLE ttn_events (
-  id              UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
-  invoice_id      UUID          NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
-  tenant_id       UUID          NOT NULL REFERENCES tenants(id),
-  event_type      ttn_event_type NOT NULL,
-  payload_sent    JSONB,
-  response_raw    JSONB,
-  http_status     INT,
-  error_message   TEXT,
-  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+ 
+CREATE INDEX idx_notification_user ON Notification(id_utilisateur)
+    WHERE est_lue = FALSE;
+ 
+CREATE TABLE Abonnement (
+    id_abonnement   UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_entreprise   UUID           NOT NULL REFERENCES Entreprise(id_entreprise) ON DELETE CASCADE,
+    plan            VARCHAR(50)    NOT NULL DEFAULT 'starter',
+    date_debut      DATE           NOT NULL DEFAULT CURRENT_DATE,
+    date_fin        DATE,
+    est_actif       BOOLEAN        NOT NULL DEFAULT TRUE,
+    nb_factures_max INT,
+    nb_clients_max  INT
 );
-
-CREATE INDEX idx_ttn_events_invoice ON ttn_events(invoice_id);
-CREATE TABLE claims (
-  id              UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
-  invoice_id      UUID          NOT NULL REFERENCES invoices(id),
-  tenant_id       UUID          NOT NULL REFERENCES tenants(id),
-  claimant_name   TEXT          NOT NULL,
-  claimant_email  TEXT          NOT NULL,
-  subject         TEXT          NOT NULL,
-  description     TEXT          NOT NULL,
-  status          claim_status  NOT NULL DEFAULT 'open',
-  resolved_at     TIMESTAMPTZ,
-  resolved_by     UUID          REFERENCES users(id),
-  resolution_note TEXT,
-  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+ 
+CREATE INDEX idx_abonnement_entreprise ON Abonnement(id_entreprise);
+ 
+CREATE TABLE ConversationIA (
+    id_conversation UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_utilisateur  UUID           NOT NULL REFERENCES Utilisateur(id_utilisateur) ON DELETE CASCADE,
+    id_entreprise   UUID           NOT NULL REFERENCES Entreprise(id_entreprise) ON DELETE CASCADE,
+    titre           VARCHAR(255),
+    date_creation   TIMESTAMPTZ       NOT NULL DEFAULT NOW(),
+    date_mise_a_jour TIMESTAMPTZ      NOT NULL DEFAULT NOW()
 );
+ 
+CREATE INDEX idx_conv_ia_user ON ConversationIA(id_utilisateur);
 
-CREATE INDEX idx_claims_tenant   ON claims(tenant_id);
-CREATE INDEX idx_claims_invoice  ON claims(invoice_id);
-CREATE TABLE ai_conversations (
-  id              UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id       UUID          NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id         UUID          NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title           TEXT,
-  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+CREATE TABLE MessageIA (
+    id_message      UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_conversation UUID           NOT NULL REFERENCES ConversationIA(id_conversation) ON DELETE CASCADE,
+    role            role_ia        NOT NULL,
+    contenu         TEXT           NOT NULL,
+    id_facture_gen  UUID           REFERENCES Facture(id_facture),
+    date_creation   TIMESTAMPTZ       NOT NULL DEFAULT NOW()
 );
+ 
+CREATE INDEX idx_message_ia_conv ON MessageIA(id_conversation);
 
-CREATE TABLE ai_messages (
-  id                UUID      PRIMARY KEY DEFAULT uuid_generate_v4(),
-  conversation_id   UUID      NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
-  role              ai_role   NOT NULL,
-  content           TEXT      NOT NULL,
-  invoice_generated UUID      REFERENCES invoices(id),
-  tokens_used       INT,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE JournalAudit (
+    id_log          UUID           PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_utilisateur  UUID           REFERENCES Utilisateur(id_utilisateur) ON DELETE SET NULL,
+    action          VARCHAR(100)   NOT NULL,
+    entite          VARCHAR(50),
+    id_entite       UUID,
+    details         JSON,
+    adresse_ip      VARCHAR(45),
+    date_action     TIMESTAMPTZ       NOT NULL DEFAULT NOW()
 );
+ 
+CREATE INDEX idx_audit_user     ON JournalAudit(id_utilisateur);
+CREATE INDEX idx_audit_entite   ON JournalAudit(entite, id_entite);
+CREATE INDEX idx_audit_date     ON JournalAudit(date_action DESC);
 
-CREATE INDEX idx_ai_conv_tenant ON ai_conversations(tenant_id, updated_at DESC);
-CREATE INDEX idx_ai_msg_conv    ON ai_messages(conversation_id);
-CREATE TABLE notifications (
-  id              UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id       UUID          NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id         UUID          REFERENCES users(id) ON DELETE CASCADE,
-  type            notif_type    NOT NULL,
-  title           TEXT          NOT NULL,
-  body            TEXT,
-  payload         JSONB         DEFAULT '{}',
-  read_at         TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_notif_user   ON notifications(user_id, created_at DESC)
-  WHERE read_at IS NULL;
-
-CREATE TABLE audit_logs (
-  id              UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id       UUID          NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id         UUID          REFERENCES users(id) ON DELETE SET NULL,
-  action          TEXT          NOT NULL,  -- ex: 'invoice.created', 'user.login'
-  resource_type   TEXT,                    -- ex: 'invoice', 'user'
-  resource_id     UUID,
-  payload         JSONB         DEFAULT '{}',
-  ip_address      INET,
-  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_audit_tenant   ON audit_logs(tenant_id, created_at DESC);
-CREATE INDEX idx_audit_resource ON audit_logs(resource_type, resource_id);
-CREATE OR REPLACE FUNCTION set_updated_at()
+CREATE OR REPLACE FUNCTION maj_date_modification()
 RETURNS TRIGGER AS $$
 BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
+    NEW.date_mise_a_jour = NOW();
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_tenants_updated
-  BEFORE UPDATE ON tenants
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER trg_users_updated
-  BEFORE UPDATE ON users
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER trg_clients_updated
-  BEFORE UPDATE ON clients
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER trg_products_updated
-  BEFORE UPDATE ON products
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER trg_invoices_updated
-  BEFORE UPDATE ON invoices
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER trg_claims_updated
-  BEFORE UPDATE ON claims
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER trg_subscriptions_updated
-  BEFORE UPDATE ON subscriptions
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-CREATE OR REPLACE FUNCTION prevent_confirmed_invoice_edit()
+ 
+CREATE TRIGGER trg_conv_ia_maj
+    BEFORE UPDATE ON ConversationIA
+    FOR EACH ROW EXECUTE FUNCTION maj_date_modification();
+ 
+CREATE OR REPLACE FUNCTION calculer_totaux_ligne()
+RETURNS TRIGGER AS $$
+DECLARE
+    taux NUMERIC;
+BEGIN
+    taux := NEW.taux_tva::TEXT::NUMERIC / 100.0;
+    NEW.montant_ht  := ROUND(NEW.quantite * NEW.prix_unitaire_ht, 3);
+    NEW.montant_tva := ROUND(NEW.montant_ht * taux, 3);
+    NEW.montant_ttc := NEW.montant_ht + NEW.montant_tva;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+ 
+CREATE TRIGGER trg_calculer_totaux_ligne
+    BEFORE INSERT OR UPDATE ON LigneFacture
+    FOR EACH ROW EXECUTE FUNCTION calculer_totaux_ligne();
+ 
+CREATE OR REPLACE FUNCTION sync_totaux_facture()
+RETURNS TRIGGER AS $$
+DECLARE
+    fac_id UUID;
+BEGIN
+    fac_id := COALESCE(NEW.id_facture, OLD.id_facture);
+    UPDATE Facture
+    SET
+        montant_ht  = (SELECT COALESCE(SUM(montant_ht),  0) FROM LigneFacture WHERE id_facture = fac_id),
+        montant_tva = (SELECT COALESCE(SUM(montant_tva), 0) FROM LigneFacture WHERE id_facture = fac_id),
+        montant_ttc = (SELECT COALESCE(SUM(montant_ttc), 0) FROM LigneFacture WHERE id_facture = fac_id)
+    WHERE id_facture = fac_id;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+ 
+CREATE TRIGGER trg_sync_totaux_facture
+    AFTER INSERT OR UPDATE OR DELETE ON LigneFacture
+    FOR EACH ROW EXECUTE FUNCTION sync_totaux_facture();
+ 
+CREATE OR REPLACE FUNCTION bloquer_modif_facture_confirmee()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF OLD.status NOT IN ('draft') AND NEW.status = OLD.status THEN
-    IF (OLD.total_ht    <> NEW.total_ht    OR
-        OLD.total_tva   <> NEW.total_tva   OR
-        OLD.total_ttc   <> NEW.total_ttc   OR
-        OLD.client_id   <> NEW.client_id   OR
-        OLD.invoice_number <> NEW.invoice_number) THEN
-      RAISE EXCEPTION
-        'Une facture confirmée ne peut pas être modifiée (id: %)', OLD.id;
+    IF OLD.statut NOT IN ('brouillon') THEN
+        IF (OLD.montant_ht     <> NEW.montant_ht     OR
+            OLD.montant_ttc    <> NEW.montant_ttc    OR
+            OLD.id_client      <> NEW.id_client      OR
+            OLD.numero_facture <> NEW.numero_facture) THEN
+            RAISE EXCEPTION
+                'Impossible de modifier une facture confirmée (id: %)', OLD.id_facture;
+        END IF;
     END IF;
-  END IF;
-  RETURN NEW;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_no_edit_confirmed_invoice
-  BEFORE UPDATE ON invoices
-  FOR EACH ROW EXECUTE FUNCTION prevent_confirmed_invoice_edit();
-CREATE OR REPLACE FUNCTION calc_invoice_line_totals()
+ 
+CREATE TRIGGER trg_bloquer_modif_confirmee
+    BEFORE UPDATE ON Facture
+    FOR EACH ROW EXECUTE FUNCTION bloquer_modif_facture_confirmee();
+ 
+CREATE OR REPLACE FUNCTION enregistrer_historique_statut()
 RETURNS TRIGGER AS $$
-DECLARE
-  rate NUMERIC;
 BEGIN
-  rate := NEW.tva_rate::TEXT::NUMERIC / 100.0;
-  NEW.total_ht  := ROUND(NEW.quantity * NEW.unit_price, 3);
-  NEW.total_tva := ROUND(NEW.total_ht * rate, 3);
-  NEW.total_ttc := NEW.total_ht + NEW.total_tva;
-  RETURN NEW;
+    IF OLD.statut <> NEW.statut THEN
+        INSERT INTO HistoriqueStatut (id_facture, ancien_statut, nouveau_statut)
+        VALUES (NEW.id_facture, OLD.statut, NEW.statut);
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_calc_line_totals
-  BEFORE INSERT OR UPDATE ON invoice_lines
-  FOR EACH ROW EXECUTE FUNCTION calc_invoice_line_totals();
-CREATE OR REPLACE FUNCTION sync_invoice_totals()
-RETURNS TRIGGER AS $$
-DECLARE
-  inv_id UUID;
-BEGIN
-  inv_id := COALESCE(NEW.invoice_id, OLD.invoice_id);
-  UPDATE invoices
-  SET
-    total_ht  = (SELECT COALESCE(SUM(total_ht),  0) FROM invoice_lines WHERE invoice_id = inv_id),
-    total_tva = (SELECT COALESCE(SUM(total_tva), 0) FROM invoice_lines WHERE invoice_id = inv_id),
-    total_ttc = (SELECT COALESCE(SUM(total_ttc), 0) FROM invoice_lines WHERE invoice_id = inv_id)
-  WHERE id = inv_id;
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_sync_invoice_totals
-  AFTER INSERT OR UPDATE OR DELETE ON invoice_lines
-  FOR EACH ROW EXECUTE FUNCTION sync_invoice_totals();
-
-ALTER TABLE users          ENABLE ROW LEVEL SECURITY;
-ALTER TABLE clients        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE products       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE invoices       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE invoice_lines  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ttn_events     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE claims         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ai_conversations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ai_messages    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE notifications  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE audit_logs     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE subscriptions  ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON users
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON clients
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON products
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON invoices
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON invoice_lines
-  USING (invoice_id IN (
-    SELECT id FROM invoices
-    WHERE tenant_id = current_setting('app.tenant_id', TRUE)::UUID
-  ));
-
-CREATE POLICY tenant_isolation ON ttn_events
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON claims
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON ai_conversations
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON ai_messages
-  USING (conversation_id IN (
-    SELECT id FROM ai_conversations
-    WHERE tenant_id = current_setting('app.tenant_id', TRUE)::UUID
-  ));
-
-CREATE POLICY tenant_isolation ON notifications
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON audit_logs
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE POLICY tenant_isolation ON subscriptions
-  USING (tenant_id = current_setting('app.tenant_id', TRUE)::UUID);
-
-CREATE TABLE invoice_sequences (
-  tenant_id   UUID    PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-  year        INT     NOT NULL,
-  last_number INT     NOT NULL DEFAULT 0
+ 
+CREATE TRIGGER trg_historique_statut
+    AFTER UPDATE ON Facture
+    FOR EACH ROW EXECUTE FUNCTION enregistrer_historique_statut();
+  
+CREATE TABLE SequenceFacture (
+    id_entreprise   UUID    PRIMARY KEY REFERENCES Entreprise(id_entreprise) ON DELETE CASCADE,
+    annee           INT     NOT NULL,
+    dernier_numero  INT     NOT NULL DEFAULT 0
 );
-
-CREATE OR REPLACE FUNCTION next_invoice_number(p_tenant_id UUID)
+ 
+CREATE OR REPLACE FUNCTION generer_numero_facture(p_id_entreprise UUID)
 RETURNS TEXT AS $$
 DECLARE
-  yr  INT := EXTRACT(YEAR FROM NOW());
-  num INT;
+    annee_courante INT := EXTRACT(YEAR FROM NOW());
+    num            INT;
 BEGIN
-  INSERT INTO invoice_sequences(tenant_id, year, last_number)
-  VALUES (p_tenant_id, yr, 1)
-  ON CONFLICT (tenant_id) DO UPDATE
-    SET last_number = CASE
-      WHEN invoice_sequences.year < yr THEN 1
-      ELSE invoice_sequences.last_number + 1
-    END,
-    year = yr
-  RETURNING last_number INTO num;
-
-  RETURN 'FAT-' || yr || '-' || LPAD(num::TEXT, 5, '0');
+    INSERT INTO SequenceFacture(id_entreprise, annee, dernier_numero)
+    VALUES (p_id_entreprise, annee_courante, 1)
+    ON CONFLICT (id_entreprise) DO UPDATE
+        SET dernier_numero = CASE
+            WHEN SequenceFacture.annee < annee_courante THEN 1
+            ELSE SequenceFacture.dernier_numero + 1
+        END,
+        annee = annee_courante
+    RETURNING dernier_numero INTO num;
+ 
+    RETURN 'FAT-' || annee_courante || '-' || LPAD(num::TEXT, 5, '0');
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE VIEW v_invoice_summary AS
+CREATE VIEW v_resume_factures AS
 SELECT
-  i.id,
-  i.tenant_id,
-  i.invoice_number,
-  i.invoice_type,
-  i.issue_date,
-  i.due_date,
-  i.status,
-  i.total_ht,
-  i.total_tva,
-  i.total_ttc,
-  i.ttn_status,
-  i.created_at,
-  c.name        AS client_name,
-  c.tax_id      AS client_tax_id,
-  u.full_name   AS created_by_name
-FROM invoices i
-JOIN clients  c ON c.id = i.client_id
-JOIN users    u ON u.id = i.created_by;
+    f.id_facture,
+    f.numero_facture,
+    f.date_emission,
+    f.date_echeance,
+    f.statut,
+    f.montant_ht,
+    f.montant_tva,
+    f.montant_ttc,
+    c.nom            AS nom_client,
+    c.matricule_fiscal AS mf_client,
+    e.raison_sociale AS entreprise,
+    u.nom || ' ' || u.prenom AS createur
+FROM Facture f
+JOIN Client      c ON c.id_client     = f.id_client
+JOIN Entreprise  e ON e.id_entreprise = f.id_entreprise
+JOIN Utilisateur u ON u.id_utilisateur = e.id_utilisateur;
 
-CREATE VIEW v_dashboard_stats AS
+CREATE VIEW v_stats_dashboard AS
 SELECT
-  tenant_id,
-  COUNT(*)                                          AS total_invoices,
-  COUNT(*) FILTER (WHERE status = 'accepted')       AS accepted,
-  COUNT(*) FILTER (WHERE status = 'rejected')       AS rejected,
-  COUNT(*) FILTER (WHERE status = 'draft')          AS drafts,
-  COUNT(*) FILTER (WHERE status = 'sent_to_ttn')    AS pending_ttn,
-  COALESCE(SUM(total_ttc) FILTER (WHERE status = 'accepted'), 0) AS total_revenue_ttc
-FROM invoices
-GROUP BY tenant_id;
-INSERT INTO plans (name, price_cents, interval, max_invoices, features) VALUES
-  ('Starter',     0,      'month', 10,   '{"chatbot": false, "ttn": true,  "export_pdf": true}'),
-  ('Pro',         2900,   'month', 200,  '{"chatbot": true,  "ttn": true,  "export_pdf": true}'),
-  ('Business',    7900,   'month', NULL, '{"chatbot": true,  "ttn": true,  "export_pdf": true, "api_access": true}');
+    f.id_entreprise,
+    COUNT(*)                                              AS total_factures,
+    COUNT(*) FILTER (WHERE f.statut = 'acceptee')         AS acceptees,
+    COUNT(*) FILTER (WHERE f.statut = 'refusee')          AS refusees,
+    COUNT(*) FILTER (WHERE f.statut = 'brouillon')        AS brouillons,
+    COUNT(*) FILTER (WHERE f.statut = 'envoyee_ttn')      AS en_attente_ttn,
+    COALESCE(SUM(f.montant_ttc) FILTER (
+        WHERE f.statut = 'acceptee'), 0)                  AS ca_total_ttc
+FROM Facture f
+GROUP BY f.id_entreprise;
+ 
+INSERT INTO Abonnement (id_abonnement, id_entreprise, plan, nb_factures_max, nb_clients_max)
+SELECT
+    uuid_generate_v4(),
+    id_entreprise,
+    'starter',
+    10,
+    20
+FROM Entreprise
+LIMIT 0; 
