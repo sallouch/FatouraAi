@@ -2,15 +2,13 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChatbotModule } from './chatbot/chatbot.module';
+import { InvoiceModule } from './invoice/invoice.module';
 
 @Module({
   imports: [
-    // 1. Charger le .env
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-
-    // 2. Connecter PostgreSQL
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -20,13 +18,13 @@ import { ChatbotModule } from './chatbot/chatbot.module';
         username: config.get('DB_USERNAME'),
         password: config.get('DB_PASSWORD'),
         database: config.get('DB_NAME'),
-        synchronize: false, // false car on a déjà notre BD.sql
+        synchronize: false,
         autoLoadEntities: true,
       }),
       inject: [ConfigService],
     }),
-
     ChatbotModule,
+    InvoiceModule,
   ],
 })
 export class AppModule {}
