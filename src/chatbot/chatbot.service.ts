@@ -171,7 +171,7 @@ export class ChatbotService {
       ];
 
       const response = await this.ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         contents,
         config: {
           systemInstruction: `Tu es un assistant de facturation pour une entreprise tunisienne.
@@ -197,7 +197,7 @@ Avant de créer une facture, montre toujours un récapitulatif et demande confir
 
           // Renvoyer le résultat à Gemini
           const finalResponse = await this.ai.models.generateContent({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-2.5-flash',
             contents: [
               ...contents,
               { role: 'model', parts: [part] },
