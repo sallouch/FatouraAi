@@ -198,6 +198,7 @@ Avant de créer une facture, montre toujours un récapitulatif et demande confir
           // Renvoyer le résultat à Gemini
           const finalResponse = await this.ai.models.generateContent({
             model: 'gemini-2.5-flash',
+            
             contents: [
               ...contents,
               { role: 'model', parts: [part] },

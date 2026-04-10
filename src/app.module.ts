@@ -20,6 +20,7 @@ import { InvoiceModule } from './invoice/invoice.module';
         database: config.get('DB_NAME'),
         synchronize: false,
         autoLoadEntities: true,
+        ssl: { rejectUnauthorized: false },
       }),
       inject: [ConfigService],
     }),
