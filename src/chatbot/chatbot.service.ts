@@ -30,14 +30,6 @@ export class ChatbotService {
 
   // ── Outils réels ──────────────────────────────────────────
 
-  private async getClients(nom: string) {
-    return this.clientRepo
-      .createQueryBuilder('c')
-      .where('c.nom ILIKE :nom', { nom: `%${nom}%` })
-      .andWhere('c.est_actif = true')
-      .getMany();
-  }
-
   private async getProduits(recherche: string) {
     return this.produitRepo
       .createQueryBuilder('p')
@@ -49,9 +41,27 @@ export class ChatbotService {
 
   private async createInvoice(data: {
     id_entreprise: string;
-    id_client: string;
+    client_info: {
+      nom: string;
+      email?: string;
+      telephone?: string;
+      adresse?: string;
+      matricule_fiscale?: string;
+    };
     items: { id_produit: string; quantite: number }[];
   }) {
+    // Créer le client à la volée
+    let client = this.clientRepo.create({
+      nom: data.client_info.nom,
+      email: data.client_info.email,
+      telephone: data.client_info.telephone,
+      adresse: data.client_info.adresse,
+      matricule_fiscal: data.client_info.matricule_fiscale,
+      est_actif: true,
+    });
+    client = await this.clientRepo.save(client);
+
+    // Générer le numéro de facture
     const result = await this.factureRepo.query(
       `SELECT generer_numero_facture($1) as numero`,
       [data.id_entreprise],
@@ -61,7 +71,7 @@ export class ChatbotService {
     const facture = this.factureRepo.create({
       numero_facture: numero,
       id_entreprise: data.id_entreprise,
-      id_client: data.id_client,
+      id_client: client.id_client,
       statut: 'brouillon',
     });
     const savedFacture = await this.factureRepo.save(facture);
@@ -92,23 +102,15 @@ export class ChatbotService {
 
   private tools: any[] = [
     {
-      name: 'get_clients',
-      description: 'Chercher un client par son nom',
-      parameters: {
-        type: 'object',
-        properties: {
-          nom: { type: 'string', description: 'Nom ou partie du nom du client' },
-        },
-        required: ['nom'],
-      },
-    },
-    {
       name: 'get_produits',
       description: 'Chercher des produits par nom ou référence',
       parameters: {
         type: 'object',
         properties: {
-          recherche: { type: 'string', description: 'Nom ou référence du produit' },
+          recherche: {
+            type: 'string',
+            description: 'Nom ou référence du produit',
+          },
         },
         required: ['recherche'],
       },
@@ -120,7 +122,20 @@ export class ChatbotService {
         type: 'object',
         properties: {
           id_entreprise: { type: 'string' },
-          id_client: { type: 'string' },
+          client_info: {
+            type: 'object',
+            properties: {
+              nom: { type: 'string', description: 'Nom complet du client' },
+              email: { type: 'string', description: 'Email du client' },
+              telephone: { type: 'string', description: 'Téléphone du client' },
+              adresse: { type: 'string', description: 'Adresse du client' },
+              matricule_fiscale: {
+                type: 'string',
+                description: 'Matricule fiscale si entreprise',
+              },
+            },
+            required: ['nom'],
+          },
           items: {
             type: 'array',
             items: {
@@ -132,7 +147,7 @@ export class ChatbotService {
             },
           },
         },
-        required: ['id_entreprise', 'id_client', 'items'],
+        required: ['id_entreprise', 'client_info', 'items'],
       },
     },
   ];
@@ -141,8 +156,6 @@ export class ChatbotService {
 
   private async executeTool(name: string, args: any) {
     switch (name) {
-      case 'get_clients':
-        return await this.getClients(args.nom);
       case 'get_produits':
         return await this.getProduits(args.recherche);
       case 'create_invoice':
@@ -155,10 +168,12 @@ export class ChatbotService {
   // ── Extraire le texte d'une réponse Gemini ───────────────
 
   private extractText(response: any): string {
-    return response.candidates?.[0]?.content?.parts
-      ?.filter((p: any) => p.text)
-      ?.map((p: any) => p.text)
-      ?.join('') ?? '';
+    return (
+      response.candidates?.[0]?.content?.parts
+        ?.filter((p: any) => p.text)
+        ?.map((p: any) => p.text)
+        ?.join('') ?? ''
+    );
   }
 
   // ── Point d'entrée principal ──────────────────────────────
@@ -170,15 +185,22 @@ export class ChatbotService {
         { role: 'user', parts: [{ text: message }] },
       ];
 
+      const systemInstruction = `Tu es un assistant de facturation pour une entreprise tunisienne.
+Tu aides à créer des factures en collectant les informations nécessaires directement dans la conversation.
+Les montants sont en Dinars Tunisiens (TND) avec 3 décimales.
+Parle toujours en français.
+
+Flow à suivre :
+1. Demande le nom du client, son email, téléphone et adresse (et matricule fiscale si c'est une entreprise)
+2. Demande les produits souhaités et les quantités (utilise get_produits pour chercher)
+3. Montre un récapitulatif complet avec les montants
+4. Demande confirmation avant de créer la facture`;
+
       const response = await this.ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents,
         config: {
-          systemInstruction: `Tu es un assistant de facturation pour une entreprise tunisienne.
-Tu aides à créer des factures en posant des questions simples.
-Les montants sont en Dinars Tunisiens (TND) avec 3 décimales.
-Parle toujours en français.
-Avant de créer une facture, montre toujours un récapitulatif et demande confirmation.`,
+          systemInstruction,
           tools: [{ functionDeclarations: this.tools }],
         },
       });
@@ -192,30 +214,27 @@ Avant de créer une facture, montre toujours un récapitulatif et demande confir
           const toolName = part.functionCall.name ?? '';
           const toolArgs = part.functionCall.args;
 
-          // Exécuter l'outil
           const toolResult = await this.executeTool(toolName, toolArgs);
 
-          // Renvoyer le résultat à Gemini
           const finalResponse = await this.ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            
             contents: [
               ...contents,
               { role: 'model', parts: [part] },
               {
                 role: 'user',
-                parts: [{
-                  functionResponse: {
-                    name: toolName,
-                    response: { result: toolResult },
+                parts: [
+                  {
+                    functionResponse: {
+                      name: toolName,
+                      response: { result: toolResult },
+                    },
                   },
-                }],
+                ],
               },
             ],
             config: {
-              systemInstruction: `Tu es un assistant de facturation pour une entreprise tunisienne.
-Parle toujours en français.
-Avant de créer une facture, montre toujours un récapitulatif et demande confirmation.`,
+              systemInstruction,
             },
           });
 
@@ -244,7 +263,6 @@ Avant de créer une facture, montre toujours un récapitulatif et demande confir
           { role: 'model', parts: [{ text: textResponse }] },
         ],
       };
-
     } catch (error) {
       console.error('ERREUR CHATBOT:', error);
       throw error;

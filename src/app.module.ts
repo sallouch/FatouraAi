@@ -21,6 +21,9 @@ import { InvoiceModule } from './invoice/invoice.module';
         synchronize: false,
         autoLoadEntities: true,
         ssl: { rejectUnauthorized: false },
+        extra: {
+      family: 4,  // ← forcer IPv4
+    },
       }),
       inject: [ConfigService],
     }),
@@ -28,4 +31,5 @@ import { InvoiceModule } from './invoice/invoice.module';
     InvoiceModule,
   ],
 })
+
 export class AppModule {}
