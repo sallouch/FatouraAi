@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { ProductService } from "../services/ProductService";
+import { getAuthenticatedUser } from "../utils/auth";
 
 const router = Router();
 
@@ -9,10 +10,15 @@ const router = Router();
  */
 router.get("/all", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
 
-    const result = await ProductService.getAllItems(page, limit);
+    const result = await ProductService.getAllItems(user.id, page, limit);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -33,10 +39,15 @@ router.get("/all", async (req: Request, res: Response) => {
  */
 router.get("/", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
 
-    const result = await ProductService.getProducts(page, limit);
+    const result = await ProductService.getProducts(user.id, page, limit);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -57,10 +68,15 @@ router.get("/", async (req: Request, res: Response) => {
  */
 router.get("/services", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
 
-    const result = await ProductService.getServices(page, limit);
+    const result = await ProductService.getServices(user.id, page, limit);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -81,6 +97,11 @@ router.get("/services", async (req: Request, res: Response) => {
  */
 router.get("/search", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const query = req.query.q as string;
     const type = req.query.type as string | undefined;
 
@@ -90,7 +111,7 @@ router.get("/search", async (req: Request, res: Response) => {
         .json({ success: false, error: "Search query is required" });
     }
 
-    const result = await ProductService.searchItems(query, type as any);
+    const result = await ProductService.searchItems(user.id, query, type as any);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -111,9 +132,14 @@ router.get("/search", async (req: Request, res: Response) => {
  */
 router.get("/category/:category", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const { category } = req.params;
 
-    const result = await ProductService.getItemsByCategory(category);
+    const result = await ProductService.getItemsByCategory(user.id, category);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -134,9 +160,14 @@ router.get("/category/:category", async (req: Request, res: Response) => {
  */
 router.get("/:id", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const { id } = req.params;
 
-    const result = await ProductService.getItemById(id);
+    const result = await ProductService.getItemById(id, user.id);
 
     if (!result.success) {
       return res.status(404).json(result);
@@ -157,6 +188,11 @@ router.get("/:id", async (req: Request, res: Response) => {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const { name, type, price, description, sku, category } = req.body;
 
     if (!name || !type || price === undefined) {
@@ -174,6 +210,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     const result = await ProductService.createItem(
+      user.id,
       name,
       type,
       price,
@@ -201,10 +238,15 @@ router.post("/", async (req: Request, res: Response) => {
  */
 router.put("/:id", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const { id } = req.params;
     const updates = req.body;
 
-    const result = await ProductService.updateItem(id, updates);
+    const result = await ProductService.updateItem(id, user.id, updates);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -225,9 +267,14 @@ router.put("/:id", async (req: Request, res: Response) => {
  */
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
+    const { user, error } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error });
+    }
+
     const { id } = req.params;
 
-    const result = await ProductService.deleteItem(id);
+    const result = await ProductService.deleteItem(id, user.id);
 
     if (!result.success) {
       return res.status(400).json(result);

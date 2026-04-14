@@ -3,19 +3,38 @@ import { Product, Item, ItemType, ApiResponse } from "../types";
 import { v4 as uuidv4 } from "uuid";
 
 export class ProductService {
+  private static async resolveOwnerColumn(): Promise<"owner_id" | "user_id"> {
+    const ownerProbe = await supabase.from("items").select("owner_id").limit(1);
+    if (!ownerProbe.error) {
+      return "owner_id";
+    }
+
+    const userProbe = await supabase.from("items").select("user_id").limit(1);
+    if (!userProbe.error) {
+      return "user_id";
+    }
+
+    throw new Error(
+      "Missing ownership column on items table. Add owner_id UUID (or user_id UUID) to enforce per-user product isolation."
+    );
+  }
+
   /**
    * Get all products and services
    */
   static async getAllItems(
+    ownerId: string,
     page: number = 1,
     limit: number = 10
   ): Promise<ApiResponse<Item[]>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
       const offset = (page - 1) * limit;
 
       const { data, error, count } = await supabase
         .from("items")
         .select("*", { count: "exact" })
+        .eq(ownerColumn, ownerId)
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
 
@@ -42,15 +61,18 @@ export class ProductService {
    * Get products only
    */
   static async getProducts(
+    ownerId: string,
     page: number = 1,
     limit: number = 10
   ): Promise<ApiResponse<Product[]>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
       const offset = (page - 1) * limit;
 
       const { data, error } = await supabase
         .from("items")
         .select("*")
+        .eq(ownerColumn, ownerId)
         .eq("type", "product")
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
@@ -78,15 +100,18 @@ export class ProductService {
    * Get services only
    */
   static async getServices(
+    ownerId: string,
     page: number = 1,
     limit: number = 10
   ): Promise<ApiResponse<Item[]>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
       const offset = (page - 1) * limit;
 
       const { data, error } = await supabase
         .from("items")
         .select("*")
+        .eq(ownerColumn, ownerId)
         .eq("type", "service")
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
@@ -113,12 +138,14 @@ export class ProductService {
   /**
    * Get a single item by ID
    */
-  static async getItemById(id: string): Promise<ApiResponse<Item>> {
+  static async getItemById(id: string, ownerId: string): Promise<ApiResponse<Item>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
       const { data, error } = await supabase
         .from("items")
         .select("*")
         .eq("id", id)
+        .eq(ownerColumn, ownerId)
         .single();
 
       if (error) {
@@ -144,6 +171,7 @@ export class ProductService {
    * Create a new item (product or service)
    */
   static async createItem(
+    ownerId: string,
     name: string,
     type: ItemType,
     price: number,
@@ -152,6 +180,7 @@ export class ProductService {
     category?: string
   ): Promise<ApiResponse<Item>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
       const id = uuidv4();
       const now = new Date().toISOString();
 
@@ -160,6 +189,7 @@ export class ProductService {
         .insert([
           {
             id,
+            [ownerColumn]: ownerId,
             name,
             type,
             price,
@@ -198,16 +228,20 @@ export class ProductService {
    */
   static async updateItem(
     id: string,
+    ownerId: string,
     updates: Partial<Item>
   ): Promise<ApiResponse<Item>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
+      const { owner_id, id: itemId, created_at, ...safeUpdates } = updates;
       const { data, error } = await supabase
         .from("items")
         .update({
-          ...updates,
+          ...safeUpdates,
           updated_at: new Date().toISOString(),
         })
         .eq("id", id)
+        .eq(ownerColumn, ownerId)
         .select()
         .single();
 
@@ -234,9 +268,14 @@ export class ProductService {
   /**
    * Delete an item
    */
-  static async deleteItem(id: string): Promise<ApiResponse<void>> {
+  static async deleteItem(id: string, ownerId: string): Promise<ApiResponse<void>> {
     try {
-      const { error } = await supabase.from("items").delete().eq("id", id);
+      const ownerColumn = await this.resolveOwnerColumn();
+      const { error } = await supabase
+        .from("items")
+        .delete()
+        .eq("id", id)
+        .eq(ownerColumn, ownerId);
 
       if (error) {
         return {
@@ -261,13 +300,16 @@ export class ProductService {
    * Search items by name or category
    */
   static async searchItems(
+    ownerId: string,
     query: string,
     type?: ItemType
   ): Promise<ApiResponse<Item[]>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
       let queryBuilder = supabase
         .from("items")
         .select("*")
+        .eq(ownerColumn, ownerId)
         .or(
           `name.ilike.%${query}%,description.ilike.%${query}%,category.ilike.%${query}%`
         );
@@ -301,12 +343,15 @@ export class ProductService {
    * Get items by category
    */
   static async getItemsByCategory(
+    ownerId: string,
     category: string
   ): Promise<ApiResponse<Item[]>> {
     try {
+      const ownerColumn = await this.resolveOwnerColumn();
       const { data, error } = await supabase
         .from("items")
         .select("*")
+        .eq(ownerColumn, ownerId)
         .eq("category", category)
         .order("created_at", { ascending: false });
 

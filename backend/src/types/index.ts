@@ -2,6 +2,7 @@ export type ItemType = "product" | "service";
 
 export interface Item {
   id: string;
+  owner_id?: string;
   name: string;
   type: ItemType;
   price: number;
