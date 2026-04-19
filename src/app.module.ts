@@ -6,12 +6,13 @@ import { SupabaseModule } from './supabase/supabase.module';
 import { User } from './auth/auth.entity';
 import { Company } from './profile/company.entity'; // ← Ajouté
 import { ProfileModule } from './profile/profile.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
+      imports: [ConfigModule , NotificationModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         type: 'postgres',
