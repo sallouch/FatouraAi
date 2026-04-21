@@ -11,33 +11,22 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Validation
+// ✅ Après
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error(
-    '❌ Variables d\'environnement Supabase manquantes. ' +
-    'Ajouter à .env.local:\n' +
-    'SUPABASE_URL=...\n' +
-    'SUPABASE_ANON_KEY=...\n' +
-    'SUPABASE_SERVICE_ROLE_KEY=...'
-  );
+  console.warn('⚠️ Supabase non configuré — fonctionnalités Supabase désactivées');
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Client Admin (Backend) - Droits complets
-// ──────────────────────────────────────────────────────────────────────────
-export const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
-});
+// ✅ Remplace les exports par :
+export const supabaseAdmin = createClient(
+  SUPABASE_URL || 'https://placeholder.supabase.co',
+  SUPABASE_SERVICE_ROLE_KEY || 'placeholder',
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
 
-// ──────────────────────────────────────────────────────────────────────────
-// Client Anon (Frontend) - Respecte Row Level Security
-// ──────────────────────────────────────────────────────────────────────────
-export const supabaseAnon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    persistSession: true,
-  },
-});
+export const supabaseAnon = createClient(
+  SUPABASE_URL || 'https://placeholder.supabase.co',
+  SUPABASE_ANON_KEY || 'placeholder',
+  { auth: { persistSession: true } }
+);
 
 export default supabaseAdmin;

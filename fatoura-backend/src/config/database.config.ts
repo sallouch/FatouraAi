@@ -2,12 +2,18 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 
 export const databaseConfig: TypeOrmModuleOptions = {
   type: 'postgres',
-  host:     process.env.DB_HOST     ?? 'localhost',
-  port:     parseInt(process.env.DB_PORT ?? '5432'),
-  username: process.env.DB_USERNAME ?? 'postgres',
-  password: process.env.DB_PASSWORD ?? 'postgres',
-  database: process.env.DB_NAME     ?? 'fatoura_db',
+  url: process.env.DATABASE_URL,
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   synchronize: process.env.NODE_ENV !== 'production',
+  ssl: {
+    rejectUnauthorized: false,
+  },
+  extra: {
+    ssl: {
+      rejectUnauthorized: false,
+    },
+    max: 10,
+    connectionTimeoutMillis: 10000,
+  },
   logging: process.env.NODE_ENV === 'development',
 };

@@ -1,15 +1,9 @@
-import { Module } from '@nestjs/common';
-import { SupabaseService } from '../services/supabase.service';
-import { SupabaseController } from './supabase.controller';
+import { Module, Global } from '@nestjs/common';
+import { SupabaseService } from './supabase.service';
 
-/**
- * Module Supabase
- * 
- * Fournit l'accès à Supabase pour tout l'application via SupabaseService
- */
+@Global()
 @Module({
   providers: [SupabaseService],
-  controllers: [SupabaseController],
-  exports: [SupabaseService], // Exporte le service pour autres modules
+  exports: [SupabaseService],
 })
 export class SupabaseModule {}

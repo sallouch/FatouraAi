@@ -6,11 +6,11 @@ import { Company } from '../profile/company.entity';
 
 export enum UserRole {
   ADMIN = 'admin',
-  USER = 'user',
+  USER  = 'user',
 }
 
 export enum UserStatus {
-  ACTIVE = 'active',
+  ACTIVE   = 'active',
   INACTIVE = 'inactive',
 }
 
@@ -31,10 +31,10 @@ export class User {
   @Column({ name: 'full_name', type: 'text' })
   fullName: string;
 
-  @Column({ type: 'enum', enum: UserRole })
+  @Column({ type: 'enum', enum: UserRole, default: UserRole.USER })
   role: UserRole;
 
-  @Column({ type: 'enum', enum: UserStatus })
+  @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;
 
   @Column({ name: 'avatar_url', type: 'text', nullable: true })
@@ -42,8 +42,10 @@ export class User {
 
   @Column({ name: 'last_login_at', type: 'timestamptz', nullable: true })
   lastLoginAt: Date;
-@Column({ name: 'phone', type: 'text', nullable: true })
-phone: string;
+
+  @Column({ name: 'phone', type: 'text', nullable: true })
+  phone: string;
+
   @OneToOne(() => Company, (company) => company.user, { eager: true })
   company: Company;
 
