@@ -1,6 +1,6 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
-@Entity('ligneFacture')
+@Entity('lignefacture')
 export class LigneFacture {
   @PrimaryGeneratedColumn('uuid')
   id_ligne!: string;

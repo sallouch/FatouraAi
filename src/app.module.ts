@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { InvoiceModule } from './invoice/invoice.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -11,21 +12,26 @@ import { InvoiceModule } from './invoice/invoice.module';
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get('DB_HOST'),
-        port: +config.get('DB_PORT'),
-        username: config.get('DB_USERNAME'),
-        password: config.get('DB_PASSWORD'),
-        database: config.get('DB_NAME'),
-        synchronize: false,
-        autoLoadEntities: true,
-        ssl: { rejectUnauthorized: false },
-      }),
+      useFactory: (config: ConfigService) => {
+        const useSsl = config.get<string>('DB_SSL') === 'true';
+
+        return {
+          type: 'postgres',
+          host: config.get('DB_HOST'),
+          port: +config.get('DB_PORT'),
+          username: config.get('DB_USERNAME'),
+          password: config.get('DB_PASSWORD'),
+          database: config.get('DB_NAME'),
+          synchronize: false,
+          autoLoadEntities: true,
+          ssl: useSsl ? { rejectUnauthorized: false } : false,
+        };
+      },
       inject: [ConfigService],
     }),
     ChatbotModule,
     InvoiceModule,
+    DashboardModule,
   ],
 })
-export class AppModule {}
+export class AppModule { }
