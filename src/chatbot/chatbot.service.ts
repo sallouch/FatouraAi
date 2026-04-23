@@ -220,7 +220,7 @@ Flow à suivre :
 4. Demande confirmation avant de créer la facture`;
 
       const response = await this.ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.0-flash',
         contents,
         config: {
           systemInstruction,
@@ -237,28 +237,29 @@ Flow à suivre :
           const toolArgs = part.functionCall.args;
 
           const toolResult = await this.executeTool(toolName, toolArgs, entrepriseId);
-
-          const finalResponse = await this.ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [
-              ...contents,
-              { role: 'model', parts: [part] },
-              {
-                role: 'user',
-                parts: [
-                  {
-                    functionResponse: {
-                      name: toolName,
-                      response: { result: toolResult },
-                    },
-                  },
-                ],
-              },
-            ],
-            config: { systemInstruction },
-          });
-
-          const finalText = this.extractText(finalResponse);
+let finalText = '';
+          try {
+            const finalResponse = await this.ai.models.generateContent({
+              model: 'gemini-2.0-flash',
+              contents: [
+                ...contents,
+                { role: 'model', parts: [part] },
+                {
+                  role: 'user',
+                  parts: [{ functionResponse: { name: toolName, response: { result: toolResult } } }],
+                },
+              ],
+              config: { systemInstruction },
+            });
+            finalText = this.extractText(finalResponse);
+          } catch (e: any) {
+            if (toolName === 'create_invoice') {
+              const f = toolResult as any;
+              finalText = `✅ Facture créée avec succès !\n\n📄 Numéro : ${f?.numero_facture ?? ''}\n💰 Montant TTC : ${f?.montant_ttc ?? 0} TND`;
+            } else {
+              finalText = '✅ Opération effectuée.';
+            }
+          }
           const invoice = toolName === 'create_invoice' ? toolResult : null;
 
           return {

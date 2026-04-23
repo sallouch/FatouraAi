@@ -5,10 +5,14 @@ import { Facture } from '../chatbot/entities/facture.entity';
 import { LigneFacture } from '../chatbot/entities/ligne-facture.entity';
 import { Produit } from '../chatbot/entities/produit.entity';
 import { Client } from '../chatbot/entities/client.entity';
+import { Company } from '../profile/company.entity';
+
 
 @Injectable()
 export class InvoiceService {
   constructor(
+    @InjectRepository(Company)
+    private companyRepo: Repository<Company>,
     @InjectRepository(Facture)
     private factureRepo: Repository<Facture>,
     @InjectRepository(LigneFacture)
@@ -42,11 +46,62 @@ export class InvoiceService {
 
   // ── Récupérer toutes les factures ─────────────────────────────────────────
 
-  async getAll() {
-    return this.factureRepo.find({
-      order: { date_creation: 'DESC' },
-    });
-  }
+    async getAll() {
+      const factures = await this.factureRepo
+        .createQueryBuilder('f')
+        .leftJoinAndMapOne('f.clientObj', Client, 'c', 'c.id_client = f.id_client')
+        .orderBy('f.date_creation', 'DESC')
+        .getMany();
+
+      return factures.map((f: any) => ({
+        id: f.id_facture,
+        number: f.numero_facture,
+        status: f.statut === 'brouillon' ? 'draft' : (f.statut ?? 'draft'),
+        date: f.date_emission,
+        dueDate: f.date_echeance,
+        total: f.montant_ttc ?? 0,
+        client: { name: f.clientObj?.nom ?? 'Client inconnu' },
+      }));
+    }
+    async getNextNumber() {
+  const last = await this.factureRepo.findOne({
+    order: { date_creation: 'DESC' },
+    where: {},
+  });
+  const year = new Date().getFullYear();
+  const seq = last ? String(parseInt(last.numero_facture?.split('-')[2] ?? '0') + 1).padStart(5, '0') : '00001';
+  return { number: `FAT-${year}-${seq}` };
+}
+
+async create(data: any, userId: string) {
+  const company = await this.companyRepo.findOne({ where: { userId } });
+  const entrepriseId = company?.id;
+
+  const client = this.clientRepo.create({
+    nom: data.client?.name ?? 'Client',
+    email: data.client?.email,
+    telephone: data.client?.phone,
+    adresse: data.client?.address,
+    matricule_fiscal: data.client?.taxId,
+    id_entreprise: entrepriseId,
+    est_actif: true,
+  });
+  const savedClient = await this.clientRepo.save(client);
+
+  const facture = this.factureRepo.create({
+    numero_facture: data.number,
+    id_entreprise: entrepriseId,
+    id_client: savedClient.id_client,
+    statut: 'brouillon',
+    date_emission: data.date,
+    date_echeance: data.dueDate,
+    montant_ht: data.items?.reduce((s: number, i: any) => s + i.quantity * i.unitPrice, 0) ?? 0,
+    montant_ttc:
+      ((data.items?.reduce((s: number, i: any) => s + i.total, 0) ?? 0) *
+        (1 + (data.taxRate ?? 0.19))),
+  });
+  return this.factureRepo.save(facture);
+}
 
   // ── Récupérer une facture par id ──────────────────────────────────────────
 

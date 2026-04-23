@@ -6,10 +6,11 @@ import { Facture } from '../chatbot/entities/facture.entity';
 import { LigneFacture } from '../chatbot/entities/ligne-facture.entity';
 import { Produit } from '../chatbot/entities/produit.entity';
 import { Client } from '../chatbot/entities/client.entity';
+import { Company } from '../profile/company.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Facture, LigneFacture, Produit, Client]),
+    TypeOrmModule.forFeature([Facture, LigneFacture, Produit, Client, Company]),
   ],
   controllers: [InvoiceController],
   providers: [InvoiceService],
