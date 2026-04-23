@@ -7,6 +7,7 @@ import { Client } from './entities/client.entity';
 import { Produit } from './entities/produit.entity';
 import { Facture } from './entities/facture.entity';
 import { LigneFacture } from './entities/ligne-facture.entity';
+import { Company } from '../profile/company.entity';  // ← AJOUT
 
 @Injectable()
 export class ChatbotService {
@@ -22,13 +23,27 @@ export class ChatbotService {
     private factureRepo: Repository<Facture>,
     @InjectRepository(LigneFacture)
     private ligneRepo: Repository<LigneFacture>,
+    @InjectRepository(Company)           // ← AJOUT
+    private companyRepo: Repository<Company>,  // ← AJOUT
   ) {
     this.ai = new GoogleGenAI({
       apiKey: this.config.get('GEMINI_API_KEY'),
     });
   }
 
+  // ── Récupérer id_entreprise depuis userId ──────────────────
+  private async getEntrepriseId(userId: string): Promise<string> {
+    const company = await this.companyRepo.findOne({
+      where: { userId },
+    });
+    if (!company) throw new Error(`Aucune entreprise trouvée pour l'utilisateur ${userId}`);
+    return company.id;
+  }
+
   // ── Outils réels ──────────────────────────────────────────
+  private isUUID(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
 
   private async getProduits(recherche: string) {
     return this.produitRepo
@@ -50,18 +65,17 @@ export class ChatbotService {
     };
     items: { id_produit: string; quantite: number }[];
   }) {
-    // Créer le client à la volée
     let client = this.clientRepo.create({
       nom: data.client_info.nom,
       email: data.client_info.email,
       telephone: data.client_info.telephone,
       adresse: data.client_info.adresse,
       matricule_fiscal: data.client_info.matricule_fiscale,
+      id_entreprise: data.id_entreprise,
       est_actif: true,
     });
     client = await this.clientRepo.save(client);
 
-    // Générer le numéro de facture
     const result = await this.factureRepo.query(
       `SELECT generer_numero_facture($1) as numero`,
       [data.id_entreprise],
@@ -78,7 +92,9 @@ export class ChatbotService {
 
     for (const item of data.items) {
       const produit = await this.produitRepo.findOne({
-        where: { id_produit: item.id_produit },
+        where: this.isUUID(item.id_produit)
+          ? { id_produit: item.id_produit }
+          : { reference: item.id_produit },
       });
       if (produit) {
         const ligne = this.ligneRepo.create({
@@ -99,6 +115,7 @@ export class ChatbotService {
   }
 
   // ── Déclarations des outils pour Gemini ──────────────────
+  // ← id_entreprise RETIRÉ — Gemini ne doit plus le fournir
 
   private tools: any[] = [
     {
@@ -121,7 +138,6 @@ export class ChatbotService {
       parameters: {
         type: 'object',
         properties: {
-          id_entreprise: { type: 'string' },
           client_info: {
             type: 'object',
             properties: {
@@ -141,31 +157,35 @@ export class ChatbotService {
             items: {
               type: 'object',
               properties: {
-                id_produit: { type: 'string' },
+                id_produit: { 
+                type: 'string', 
+                description: 'La référence exacte du produit (champ reference) retournée par get_produits, jamais un UUID inventé' 
+              },
                 quantite: { type: 'number' },
               },
             },
           },
         },
-        required: ['id_entreprise', 'client_info', 'items'],
+        required: ['client_info', 'items'],
       },
     },
   ];
 
   // ── Exécuter l'outil appelé par Gemini ───────────────────
 
-  private async executeTool(name: string, args: any) {
+  private async executeTool(name: string, args: any, entrepriseId: string) {
     switch (name) {
       case 'get_produits':
         return await this.getProduits(args.recherche);
       case 'create_invoice':
-        return await this.createInvoice(args);
+        return await this.createInvoice({
+          ...args,
+          id_entreprise: entrepriseId, // ← toujours depuis la DB
+        });
       default:
         return { error: 'Outil inconnu' };
     }
   }
-
-  // ── Extraire le texte d'une réponse Gemini ───────────────
 
   private extractText(response: any): string {
     return (
@@ -178,8 +198,11 @@ export class ChatbotService {
 
   // ── Point d'entrée principal ──────────────────────────────
 
-  async sendMessage(message: string, history: any[]) {
+  async sendMessage(message: string, history: any[], userId: string) {
     try {
+      // ← Récupère le vrai id_entreprise depuis la DB
+      const entrepriseId = await this.getEntrepriseId(userId);
+
       const contents = [
         ...history,
         { role: 'user', parts: [{ text: message }] },
@@ -208,13 +231,12 @@ Flow à suivre :
       const candidate = response.candidates?.[0];
       const parts = candidate?.content?.parts || [];
 
-      // Vérifier si Gemini veut appeler un outil
       for (const part of parts) {
         if (part.functionCall) {
           const toolName = part.functionCall.name ?? '';
           const toolArgs = part.functionCall.args;
 
-          const toolResult = await this.executeTool(toolName, toolArgs);
+          const toolResult = await this.executeTool(toolName, toolArgs, entrepriseId);
 
           const finalResponse = await this.ai.models.generateContent({
             model: 'gemini-2.5-flash',
@@ -233,9 +255,7 @@ Flow à suivre :
                 ],
               },
             ],
-            config: {
-              systemInstruction,
-            },
+            config: { systemInstruction },
           });
 
           const finalText = this.extractText(finalResponse);
@@ -252,7 +272,6 @@ Flow à suivre :
         }
       }
 
-      // Réponse texte simple
       const textResponse = this.extractText(response);
 
       return {
