@@ -5,6 +5,7 @@ import { AuthModule } from "./auth/auth.module";
 import { ChatbotModule } from "./chatbot/chatbot.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { InvoiceModule } from "./invoice/invoice.module";
+import { StockModule } from './stock/stock.module';
 import { NotificationModule } from "./notification/notification.module";
 import { ProfileModule } from "./profile/profile.module";
 import { SupabaseModule } from "./supabase/supabase.module";
@@ -37,6 +38,7 @@ import { Company } from "./profile/company.entity";
     ChatbotModule,
     InvoiceModule,
     DashboardModule,
+    StockModule,
     NotificationModule,
   ],
 })
