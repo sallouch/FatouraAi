@@ -59,7 +59,7 @@ export class InvoiceService {
         status: f.statut === 'brouillon' ? 'draft' : (f.statut ?? 'draft'),
         date: f.date_emission,
         dueDate: f.date_echeance,
-        total: f.montant_ttc ?? 0,
+        total: parseFloat(f.montant_ttc?.toString() ?? '0'),
         client: { name: f.clientObj?.nom ?? 'Client inconnu' },
       }));
     }

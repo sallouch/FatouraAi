@@ -76,15 +76,26 @@ export class ChatbotService {
     });
     client = await this.clientRepo.save(client);
 
-    const result = await this.factureRepo.query(
-      `SELECT generer_numero_facture($1) as numero`,
-      [data.id_entreprise],
-    );
-    const numero = result[0].numero;
+// APRÈS
+const year = new Date().getFullYear();
+const lastFacture = await this.factureRepo
+  .createQueryBuilder('f')
+  .where('f.id_entreprise = :id', { id: data.id_entreprise })
+  .andWhere('f.numero_facture LIKE :pattern', { pattern: `FAT-${year}-%` })
+  .orderBy('f.numero_facture', 'DESC')
+  .getOne();
+
+  let nextNum = 1;
+  if (lastFacture) {
+    const parts = lastFacture.numero_facture.split('-');
+    nextNum = parseInt(parts[parts.length - 1], 10) + 1;
+  }
+  const numero = `FAT-${year}-${String(nextNum).padStart(5, '0')}`;
 
     const facture = this.factureRepo.create({
       numero_facture: numero,
       id_entreprise: data.id_entreprise,
+      date_emission: new Date().toISOString().split('T')[0],
       id_client: client.id_client,
       statut: 'brouillon',
     });
@@ -220,7 +231,7 @@ Flow à suivre :
 4. Demande confirmation avant de créer la facture`;
 
       const response = await this.ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         contents,
         config: {
           systemInstruction,
@@ -240,7 +251,7 @@ Flow à suivre :
 let finalText = '';
           try {
             const finalResponse = await this.ai.models.generateContent({
-              model: 'gemini-2.0-flash',
+              model: 'gemini-2.5-flash',
               contents: [
                 ...contents,
                 { role: 'model', parts: [part] },
